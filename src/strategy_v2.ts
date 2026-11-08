@@ -25,12 +25,15 @@ export interface Params {
   holdTiles: number; // play the best word once the rack reaches this size
   dumpLeft: number;  // play everything once this few tiles are left in the bag
   lowCoins: number;  // play to earn coins below this balance
+  premMid: number;   // bid multiplier for 3-5 point consonants
+  premHigh: number;  // bid multiplier for J/Q/X/Z (Q only with a U)
 }
 
 export const PARAMS: Params = {
   pace: 0.8, paceMin: 0.5, paceMax: 4,
   deltaW: 1.0, baseW: 0.6,
   playScore: 12, holdTiles: 10, dumpLeft: 15, lowCoins: 15,
+  premMid: 1, premHigh: 1,
 };
 
 let index: WordIndex | null = null;
@@ -77,7 +80,16 @@ export function decideBid(ctx: BidContext, p: Params = PARAMS): number {
   const worth = delta * p.deltaW + prior * p.baseW;
   const left = Math.max(1, ctx.tilesLeft);
   const pace = Math.min(p.paceMax, Math.max(p.paceMin, (ctx.myBalance / left) * p.pace));
-  return Math.max(0, Math.min(Math.round(worth * pace), ctx.myBalance));
+  const bid = Math.max(0, Math.min(Math.round(worth * pace), ctx.myBalance));
+
+  // Top real bots pay far more for premium letters than for vowels.
+  const value = LETTER_VALUE[c] ?? 1;
+  let k = 1;
+  if (!VOWELS.has(c)) {
+    if (value >= 8) k = c === "Q" && (ctx.myRack.get("U") ?? 0) === 0 ? 1 : p.premHigh;
+    else if (value >= 3) k = p.premMid;
+  }
+  return Math.max(0, Math.min(Math.round(bid * k), ctx.myBalance));
 }
 
 export interface WordContext {
