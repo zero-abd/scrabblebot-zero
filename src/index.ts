@@ -74,8 +74,13 @@ setDictionary(DICTIONARY);
 let myIdentity: Identity | null = null;
 let myBotId: bigint | null = null;
 const bidsByAuction = new Set<string>();
-const lastWordAttemptByMatch = new Map<string, number>();
-const WORD_RETRY_MS = 500;
+// AUDIT PATCH (fix 1): the old 500 ms throttle was stamped by every 300 ms
+// timer tick, even ticks that played nothing, so a rack change usually landed
+// inside the throttle and waited for a later tick. Live data: ZeroRack's words
+// land a median 537 ms after the close that gave it the tile (other bots: 114).
+// Instead, allow one submitWord in flight per match; the next attempt runs as
+// soon as the server answers, so the rack is never stale and dumps chain at RTT.
+const wordInFlight = new Set<string>();
 let wordTimer: NodeJS.Timeout | null = null;
 
 function resolveMyBotId(conn: DbConnection): bigint | null {
@@ -137,6 +142,15 @@ function tryBid(
   if (bidsByAuction.has(key)) return;
   const participant = participantForMatch(conn, matchId);
   if (!participant) return;
+  // AUDIT PATCH (fix 3): an auction that opens with the bag already empty is
+  // the last one. Its tile is added in the same transaction that ends the
+  // match, so it can never be played. ZeroRack won it in 13 of 25 matches.
+  // The bot has no other use for the coin, so this changes no points; it only
+  // stops the bot buying a tile it can't use.
+  if (tilesLeftFor(conn, matchId) === 0) {
+    bidsByAuction.add(key);
+    return;
+  }
   const amount = decideBid({
     letter,
     myBalance: participant.balance,
@@ -163,11 +177,9 @@ function tryPlayWord(conn: DbConnection) {
     const m = conn.db.matchState.id.find(p.matchId);
     if (m?.status.tag === "Running") matches.add(p.matchId);
   }
-  const now = Date.now();
   for (const matchId of matches) {
     const key = String(matchId);
-    if (now - (lastWordAttemptByMatch.get(key) ?? 0) < WORD_RETRY_MS) continue;
-    lastWordAttemptByMatch.set(key, now);
+    if (wordInFlight.has(key)) continue; // answer pending; rack may be stale
     const word = chooseWord({
       myRack: rackForMatch(conn, matchId),
       dictionary: DICTIONARY,
@@ -176,9 +188,33 @@ function tryPlayWord(conn: DbConnection) {
     });
     if (!word) continue;
     console.log(`[${BOT_NAME}] match ${matchId}: playing '${word}'`);
+    wordInFlight.add(key);
+    // Safety valve: never let a lost reply block word play for long.
+    const valve = setTimeout(() => wordInFlight.delete(key), 1500);
     conn.reducers
       .submitWord({ matchId, word })
-      .catch(logFailure(`playing '${word}'`));
+      .then(
+        () => true,
+        (err: unknown) => {
+          logFailure(`playing '${word}'`)(err);
+          return false;
+        },
+      )
+      .then((ok) => {
+        clearTimeout(valve);
+        // After a rejection, wait 300 ms before trying again so a word the
+        // server keeps refusing can't cause a retry loop.
+        if (!ok) {
+          setTimeout(() => wordInFlight.delete(key), 300);
+          return;
+        }
+        wordInFlight.delete(key);
+        // The rack has changed by now (or the play failed). Look again right
+        // away so a second word from the same rack goes out at RTT, not on a
+        // later timer tick. This matters at the end of the match, when the
+        // last playable tile arrives with only about 1 s left.
+        tryPlayWord(conn);
+      });
   }
 }
 
@@ -248,6 +284,7 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
   });
   conn.db.myRack.onInsert(() => tryPlayWord(conn));
   conn.db.myRack.onUpdate(() => tryPlayWord(conn));
+  conn.db.myRack.onDelete(() => tryPlayWord(conn)); // AUDIT PATCH: a word that uses all of a letter deletes its row
   conn.db.botCredential.onInsert(() => {
     if (myBotId === null) myBotId = resolveMyBotId(conn);
   });
@@ -314,7 +351,33 @@ function bootstrapActivity(conn: DbConnection) {
   tryPlayWord(conn);
   // Re-check words even when the rack doesn't change, so the bot cashes in
   // its held letters as the bag runs down.
-  if (!wordTimer) wordTimer = setInterval(() => tryPlayWord(conn), 300);
+  // The timer no longer throttles anything; it is only a backstop.
+  if (wordTimer) clearInterval(wordTimer);
+  wordTimer = setInterval(() => tryPlayWord(conn), 300);
+}
+
+// AUDIT PATCH (fix 2): the live bot only logs "disconnected" and then sits
+// idle until someone restarts it. In match 47426 it stopped bidding at
+// 04:37:53 and never bid or played again in that match: 0 points, 8 tiles and
+// 64 coins unused. Reconnect with backoff. The saved token keeps the same
+// identity; bootstrapActivity re-bids on the open auction and replays the rack.
+let reconnectDelayMs = 500;
+let reconnectPending = false;
+function scheduleReconnect() {
+  if (reconnectPending) return; // connectError and disconnect can both fire
+  reconnectPending = true;
+  if (wordTimer) {
+    clearInterval(wordTimer);
+    wordTimer = null;
+  }
+  wordInFlight.clear();
+  const wait = reconnectDelayMs;
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, 10_000);
+  console.warn(`[${BOT_NAME}] reconnecting in ${wait} ms`);
+  setTimeout(() => {
+    reconnectPending = false;
+    main();
+  }, wait);
 }
 
 function main() {
@@ -323,11 +386,19 @@ function main() {
     .withUri(HOST)
     .withDatabaseName(DB_NAME)
     .withToken(BOT_TOKEN ?? loadToken())
-    .onConnect(onConnect)
-    .onConnectError((_ctx: ErrorContext, err: Error) =>
-      console.error("connect error:", err.message),
-    )
-    .onDisconnect(() => console.log("disconnected"))
+    .onConnect((conn, identity, token) => {
+      reconnectDelayMs = 500;
+      reconnectPending = false;
+      onConnect(conn, identity, token);
+    })
+    .onConnectError((_ctx: ErrorContext, err: Error) => {
+      console.error("connect error:", err.message);
+      scheduleReconnect();
+    })
+    .onDisconnect(() => {
+      console.log("disconnected");
+      scheduleReconnect();
+    })
     .build();
 }
 
