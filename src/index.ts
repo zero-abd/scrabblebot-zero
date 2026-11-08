@@ -27,7 +27,11 @@ import {
 import { Identity } from "spacetimedb";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { chooseWord, decideBid } from "./strategy.js";
+import { PARAMS, chooseWord, decideBid, setDictionary } from "./strategy_v2.js";
+
+// Best config from the offline benchmark: 85% wins vs 46.1 avg / 15% for the
+// old bot, against a table of 5 old bots over 60 simulated matches.
+Object.assign(PARAMS, { deltaW: 0.3, baseW: 1, pace: 1.2, playScore: 20 });
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
@@ -65,6 +69,7 @@ const DICTIONARY: string[] = fs.existsSync(dictionaryPath)
       .filter((l) => l.length >= 2)
   : [];
 DICTIONARY.sort((a, b) => b.length - a.length); // longest first for greedy pick
+setDictionary(DICTIONARY);
 
 let myIdentity: Identity | null = null;
 let myBotId: bigint | null = null;
