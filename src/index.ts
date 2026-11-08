@@ -29,9 +29,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PARAMS, chooseWord, decideBid, setDictionary } from "./strategy_v2.js";
 
-// Best config from the offline benchmark: 85% wins vs 46.1 avg / 15% for the
-// old bot, against a table of 5 old bots over 60 simulated matches.
-Object.assign(PARAMS, { deltaW: 0.3, baseW: 1, pace: 1.2, playScore: 20 });
+// Best config from the offline benchmarks. playScore 32 beat the previous live
+// config (playScore 20) head-to-head: 35% wins vs 20%, 60 simulated matches.
+Object.assign(PARAMS, { deltaW: 0.3, baseW: 1, pace: 1.2, playScore: 32 });
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
