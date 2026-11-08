@@ -35,6 +35,7 @@ const BOT_NAME = process.env.BOT_NAME ?? "bot";
 const BOT_TOKEN = process.env.BOT_TOKEN; // from the website, first run only
 const BOT_NONCE = process.env.BOT_NONCE; // from the CLI, first run only
 const TOURNAMENT_ID = process.env.TOURNAMENT_ID;
+const BOT_ID = Number(process.env.BOT_ID ?? 394); // ZeroRack's bot id on the site
 const TOKEN_PATH = path.join(process.cwd(), `.token-${BOT_NAME}`);
 
 function loadToken(): string | undefined {
@@ -224,17 +225,16 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
       );
       bootstrapActivity(conn);
     })
-    // Only the live tables the bot uses. Subscribing to everything pulls the
-    // full history of every match (auction results, word plays, bids) and
-    // runs Node out of memory.
+    // Only this bot's own matches. Subscribing to everything pulls the full
+    // history of every match and stalls Node in garbage collection.
     .subscribe([
       "SELECT * FROM bot",
       "SELECT * FROM bot_credential",
       "SELECT * FROM lobby",
       "SELECT * FROM lobby_member",
-      "SELECT * FROM match_state",
-      "SELECT * FROM match_participant",
-      "SELECT * FROM auction",
+      `SELECT * FROM match_participant WHERE bot_id = ${BOT_ID}`,
+      `SELECT m.* FROM match_state m JOIN match_participant p ON m.id = p.match_id WHERE p.bot_id = ${BOT_ID}`,
+      `SELECT a.* FROM auction a JOIN match_participant p ON a.match_id = p.match_id WHERE p.bot_id = ${BOT_ID}`,
       "SELECT * FROM my_rack",
     ]);
 
