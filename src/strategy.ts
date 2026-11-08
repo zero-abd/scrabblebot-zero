@@ -68,7 +68,7 @@ export function decideBid(ctx: BidContext): number {
 
   // Spend faster as the bag runs down; coins left at the end are wasted.
   const left = Math.max(1, ctx.tilesLeft);
-  const pace = Math.min(6, Math.max(0.8, (ctx.myBalance / left) * 1.2));
+  const pace = Math.min(4, Math.max(0.5, (ctx.myBalance / left) * 0.8));
   const bid = Math.round(worth * pace);
   return Math.max(0, Math.min(bid, ctx.myBalance));
 }
@@ -108,9 +108,10 @@ export function chooseWord(ctx: WordContext): string | null {
 
   if (bestLong) return bestLong;
   if (!best) return null;
-  if (ctx.tilesLeft <= 10) return best;           // dump before the match ends
-  if (tiles >= 12) return best;                   // rack too big to hold
-  if (ctx.myBalance < 12 && bestScore >= 4) return best; // need coins to bid
+  if (ctx.tilesLeft <= 15) return best;           // dump before the match ends
+  if (bestScore >= 12) return best;               // a good 5-6 letter word now beats waiting
+  if (tiles >= 10) return best;                   // rack too big to hold
+  if (ctx.myBalance < 15 && bestScore >= 3) return best; // need coins to bid
   return null;
 }
 
