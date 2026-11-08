@@ -90,20 +90,10 @@ function rackForMatch(
   return rack;
 }
 
-// Tiles still in the bag: the bag total minus starting racks and tiles won.
-// Tiles nobody bid on go back in the bag, so they don't count as drawn.
+// Tiles still in the bag. The module decrements bagTotal on every draw.
 function tilesLeftFor(conn: DbConnection, matchId: bigint): number {
   const m = conn.db.matchState.id.find(matchId);
-  if (!m) return 100;
-  let players = 0;
-  for (const p of conn.db.matchParticipant.iter()) {
-    if (p.matchId === matchId) players++;
-  }
-  let won = 0;
-  for (const r of conn.db.auctionResult.iter()) {
-    if (r.matchId === matchId && r.winnerBotId !== undefined && r.winnerBotId !== null) won++;
-  }
-  return Math.max(0, m.bagTotal - players * m.startingRackSize - won);
+  return m ? m.bagTotal : 100;
 }
 
 function participantForMatch(
@@ -234,7 +224,19 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
       );
       bootstrapActivity(conn);
     })
-    .subscribeToAllTables();
+    // Only the live tables the bot uses. Subscribing to everything pulls the
+    // full history of every match (auction results, word plays, bids) and
+    // runs Node out of memory.
+    .subscribe([
+      "SELECT * FROM bot",
+      "SELECT * FROM bot_credential",
+      "SELECT * FROM lobby",
+      "SELECT * FROM lobby_member",
+      "SELECT * FROM match_state",
+      "SELECT * FROM match_participant",
+      "SELECT * FROM auction",
+      "SELECT * FROM my_rack",
+    ]);
 
   conn.db.auction.onInsert((_ctx: EventContext, a) => {
     if (a.status.tag === "Open") tryBid(conn, a.id, a.matchId, a.letter);
