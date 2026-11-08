@@ -32,9 +32,9 @@ import { PARAMS, chooseWord, decideBid, setDictionary } from "./strategy_v2.js";
 // Best config from the offline benchmarks. playScore 32 beat the previous live
 // config (playScore 20) head-to-head: 35% wins vs 20%, 60 simulated matches.
 Object.assign(PARAMS, { deltaW: 0.3, baseW: 1, pace: 1.2, playScore: 32 });
-// Pay more for premium letters, as the top real bots do. Beat the config above
-// on 2 seeds vs a field modeled on real top bots: 42-55% wins vs 32-33%.
-Object.assign(PARAMS, { premMid: 1.3, premHigh: 1.6 });
+// Premium-letter markup (premMid 1.3, premHigh 1.6) won in simulation but did
+// worse in real matches (75 avg, place 4.2 over 5 matches vs 100 avg, place 2.5
+// over 10 without it), so it stays off.
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
